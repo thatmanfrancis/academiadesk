@@ -1,0 +1,339 @@
+// This is your Prisma schema file
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  TEACHER
+  PARENT
+  GUARDIAN
+  STUDENT
+}
+
+enum TeacherTitle {
+  HEADMASTER
+  DEPUTY_HEADMASTER
+  HEAD_OF_DEPARTMENT
+  FORM_MASTER
+  CLASS_TEACHER
+  SUBJECT_TEACHER
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum BloodGroup {
+  A_POS
+  A_NEG
+  B_POS
+  B_NEG
+  AB_POS
+  AB_NEG
+  O_POS
+  O_NEG
+  UNKNOWN
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+enum ScratchCardStatus {
+  UNUSED
+  USED
+}
+
+// ─── Tenant (School) ──────────────────────────────────────────────────────────
+
+model Tenant {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  isPublished Boolean  @default(true)
+  curriculum  String[]
+  feeRange    String?
+  address     String?
+  logo        String?
+  state       String?
+  lga         String?
+  phone       String?
+  website     String?
+  schoolType  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users        User[]
+  classes      Class[]
+  students     Student[]
+  teachers     Teacher[]
+  terms        Term[]
+  reviews      PublicReview[]
+  applications AdmissionApplication[]
+  scratchCards ScratchCard[]
+}
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(uuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+  password      String?
+  role          Role?
+  tenantId      String?
+  tenant        Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  teacher       Teacher?
+}
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─── Teacher ─────────────────────────────────────────────────────────────────
+
+model Teacher {
+  id        String       @id @default(uuid())
+  userId    String       @unique
+  user      User         @relation(fields: [userId], references: [id])
+  tenantId  String
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  title     TeacherTitle @default(SUBJECT_TEACHER)
+  subjects  String[]     // subjects they teach
+  classes   Class[]      // classes they are form master of
+  privilege TeacherPrivilege?
+  createdAt DateTime     @default(now())
+}
+
+/// Granular per-teacher permission flags — admin grants/revokes these
+model TeacherPrivilege {
+  id               String  @id @default(uuid())
+  teacherId        String  @unique
+  teacher          Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  // What the teacher can do
+  canViewStudents      Boolean @default(true)
+  canManageGrades      Boolean @default(false)
+  canViewAllGrades     Boolean @default(false)
+  canManageAttendance  Boolean @default(false)
+  canViewInvoices      Boolean @default(false)
+  canManageInvoices    Boolean @default(false)
+  canViewApplications  Boolean @default(false)
+  canManageClasses     Boolean @default(false)
+  canViewReports       Boolean @default(false)
+  canPublishResults    Boolean @default(false)
+}
+
+// ─── Academic Term ────────────────────────────────────────────────────────────
+
+model Term {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String   // e.g. "First Term 2024/2025"
+  year      String   // e.g. "2024/2025"
+  term      Int      // 1, 2, or 3
+  startDate DateTime
+  endDate   DateTime
+  isCurrent Boolean  @default(false)
+  grades    Grade[]
+  invoices  Invoice[]
+}
+
+// ─── Class ────────────────────────────────────────────────────────────────────
+
+model Class {
+  id        String    @id @default(uuid())
+  name      String
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  teacherId String?
+  teacher   Teacher?  @relation(fields: [teacherId], references: [id])
+  students  Student[]
+  grades    Grade[]
+}
+
+// ─── Student ─────────────────────────────────────────────────────────────────
+
+model Student {
+  id          String    @id @default(uuid())
+  firstName   String
+  lastName    String
+  otherNames  String?
+  regNumber   String
+  dateOfBirth DateTime?
+  gender      Gender?
+  photo       String?   // URL
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  classId     String
+  class       Class     @relation(fields: [classId], references: [id])
+  createdAt   DateTime  @default(now())
+
+  guardians    Guardian[]
+  healthRecord HealthRecord?
+  grades       Grade[]
+  invoices     Invoice[]
+  scratchCards ScratchCard[]
+}
+
+// ─── Guardian / Parent ────────────────────────────────────────────────────────
+
+model Guardian {
+  id           String   @id @default(uuid())
+  studentId    String
+  student      Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  fullName     String
+  relationship String   // e.g. Mother, Father, Uncle
+  phone        String
+  email        String?
+  address      String?
+  occupation   String?
+  isPrimary    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
+
+// ─── Health Record ────────────────────────────────────────────────────────────
+
+model HealthRecord {
+  id                 String     @id @default(uuid())
+  studentId          String     @unique
+  student            Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  bloodGroup         BloodGroup @default(UNKNOWN)
+  genotype           String?    // e.g. AA, AS, SS
+  allergies          String[]
+  disabilities       String[]
+  medicalConditions  String[]
+  emergencyContact   String?
+  emergencyPhone     String?
+  doctorName         String?
+  doctorPhone        String?
+  lastUpdated        DateTime   @default(now()) @updatedAt
+}
+
+// ─── Grade ────────────────────────────────────────────────────────────────────
+
+model Grade {
+  id         String  @id @default(uuid())
+  studentId  String
+  student    Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  classId    String
+  class      Class   @relation(fields: [classId], references: [id])
+  termId     String
+  term       Term    @relation(fields: [termId], references: [id])
+  subject    String
+  caScore    Float
+  examScore  Float
+  totalScore Float
+
+  @@unique([studentId, termId, subject])
+}
+
+// ─── Invoice ──────────────────────────────────────────────────────────────────
+
+model Invoice {
+  id          String        @id @default(uuid())
+  studentId   String
+  student     Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId      String
+  term        Term          @relation(fields: [termId], references: [id])
+  description String        @default("School Fees")
+  amount      Float
+  amountPaid  Float         @default(0)
+  status      InvoiceStatus @default(UNPAID)
+  dueDate     DateTime
+  createdAt   DateTime      @default(now())
+}
+
+// ─── Scratch Card ─────────────────────────────────────────────────────────────
+
+model ScratchCard {
+  id         String            @id @default(uuid())
+  tenantId   String
+  tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  studentId  String?
+  student    Student?          @relation(fields: [studentId], references: [id])
+  pin        String            @unique
+  serial     String            @unique
+  status     ScratchCardStatus @default(UNUSED)
+  usedAt     DateTime?
+  createdAt  DateTime          @default(now())
+}
+
+// ─── Public ───────────────────────────────────────────────────────────────────
+
+model PublicReview {
+  id         String   @id @default(uuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parentName String
+  rating     Int
+  comment    String
+  isVerified Boolean  @default(false)
+  createdAt  DateTime @default(now())
+}
+
+model AdmissionApplication {
+  id              String   @id @default(uuid())
+  applicationCode String   @unique // 8-char hex, e.g. "3F8A2C1D"
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parentName      String
+  parentEmail     String
+  childName       String
+  status          String   @default("PENDING")
+  createdAt       DateTime @default(now())
+}
